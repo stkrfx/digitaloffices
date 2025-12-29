@@ -12,7 +12,6 @@
     // Safety Checks
     "strict": true,
     "esModuleInterop": true,
-    "ignoreDeprecations": "6.0",
     "skipLibCheck": true,
     
     // This allows us to import from the '../shared' folder

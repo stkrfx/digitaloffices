@@ -24,8 +24,6 @@ out/
 # prisma/generated/
 
 # Project IDX & VS Code
-.idx/
-.vscode/
 *.tsbuildinfo
 .DS_Store
 
