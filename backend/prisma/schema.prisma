@@ -1,0 +1,259 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==========================================
+// 1. THE CORE IDENTITY (Updated Images)
+// ==========================================
+
+model User {
+  id       String @id @default(uuid())
+  email    String @unique
+  username String @unique
+  name     String
+
+  // USER AVATAR: Casual/Personal (e.g. for Reviews)
+  avatarUrl String?
+
+  passwordHash String?
+  googleId     String? @unique
+
+  lastLogin DateTime?
+
+  deletedAt DateTime?
+
+  // Security Fields
+  emailVerifiedAt        DateTime?
+  emailVerificationToken String?   @unique
+  passwordResetToken     String?   @unique
+  passwordResetExpires   DateTime?
+
+  // Roles
+  expertProfile       ExpertProfile?
+  organizationProfile OrganizationProfile?
+  adminProfile        AdminProfile?
+
+  // Activity
+  reviewsWritten Review[] // Reviews the user wrote
+  bookings       Booking[] // Appointments the user made
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  refreshSessions RefreshSession[]
+}
+
+// ==========================================
+// 2. SESSION MANAGEMENT (Dual Token)
+// ==========================================
+
+model RefreshSession {
+  id        String @id @default(uuid())
+  tokenHash String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  ipAddress String?
+  userAgent String?
+}
+
+// ==========================================
+// 2. ROLE PROFILES (Gold Standard Separation)
+// ==========================================
+
+model ExpertProfile {
+  id String @id @default(uuid())
+
+  // BRANDING: Professional Headshot (Distinct from User Avatar)
+  headshotUrl String?
+  headline    String
+  bio         String?
+  address     String?
+
+  availability Availability[]
+
+  timezone String @default("Australia/Sydney")
+
+  // EMPLOYMENT: Expert works for an Organization?
+  // If null, they are a Freelancer.
+  organizationId String?
+  organization   OrganizationProfile? @relation(fields: [organizationId], references: [id])
+
+  specialties String[]
+  isVerified  Boolean  @default(false)
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // MARKETPLACE
+  services Service[] // The menu of things they sell
+  bookings Booking[] // The appointments they have to fulfill
+  reviews  Review[] // Reviews received
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OrganizationProfile {
+  id String @id @default(uuid())
+
+  timezone String @default("Australia/Sydney")
+
+  // BRANDING: Company Logo (Distinct from User Avatar)
+  logoUrl   String?
+  bannerUrl String? // Nice to have for Org Profile Page
+
+  companyName      String // Often different from the owner's "User Name"
+  companyRegNumber String?
+  websiteUrl       String?
+  address          String? // Physical location for "In-Person" visits
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // RELATIONS
+  experts ExpertProfile[] // List of experts working here
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Admins are Users with superpowers
+model AdminProfile {
+  id    String     @id @default(uuid())
+  level AdminLevel @default(MODERATOR)
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ==========================================
+// 3. THE MARKETPLACE ENGINE (Services & Bookings)
+// ==========================================
+
+model Service {
+  id          String  @id @default(uuid())
+  title       String
+  description String?
+
+  isActive Boolean @default(true)
+
+  // PRICING
+  price       Decimal @db.Decimal(10, 2)
+  durationMin Int // e.g., 60 minutes
+  bufferMin   Int     @default(0) // ADD THIS: Time needed after service to reset/rest
+
+  // TYPE: The logic you requested (Video vs Clinic)
+  type ServiceType
+
+  expertId String
+  expert   ExpertProfile @relation(fields: [expertId], references: [id])
+
+  bookings Booking[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Booking {
+  id String @id @default(uuid())
+
+  // WHO is involved?
+  customerId String
+  customer   User   @relation(fields: [customerId], references: [id])
+
+  expertId String
+  expert   ExpertProfile @relation(fields: [expertId], references: [id])
+
+  paymentIntentId String? // The Stripe Transaction ID (Crucial for refunds)
+
+  cancellationReason String? // e.g. "Expert called in sick" or "User changed mind"
+
+  priceSnapshot Decimal @db.Decimal(10, 2) // Store the exact price user agreed to
+
+  serviceId String
+  service   Service @relation(fields: [serviceId], references: [id])
+
+  // WHEN is it?
+  startTime DateTime
+  endTime   DateTime
+
+  // STATUS FLOW
+  status BookingStatus @default(PENDING)
+
+  // MEETING DETAILS
+  // If Type = VIDEO, store Zoom/GoogleMeet link here
+  meetingLink String?
+  // If Type = IN_PERSON, store address snapshot here
+  location    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  review    Review?
+}
+
+model Review {
+  id      String  @id @default(uuid())
+  rating  Int // 1-5 stars
+  comment String?
+
+  bookingId String  @unique // One review per booking
+  booking   Booking @relation(fields: [bookingId], references: [id])
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+
+  expertId String
+  expert   ExpertProfile @relation(fields: [expertId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+// ADD THIS NEW MODEL:
+model Availability {
+  id String @id @default(uuid())
+
+  expertId String
+  expert   ExpertProfile @relation(fields: [expertId], references: [id], onDelete: Cascade)
+
+  dayOfWeek Int // 0=Sunday, 1=Monday, etc.
+  startTime String // "09:00" (24h format)
+  endTime   String // "17:00"
+
+  isActive Boolean @default(true) // Toggle specific days off easily
+
+  @@index([expertId])
+}
+
+// ==========================================
+// 4. ENUMS
+// ==========================================
+
+enum ServiceType {
+  VIDEO_CALL
+  IN_PERSON_VISIT
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum AdminLevel {
+  SUPER_ADMIN
+  MODERATOR
+}

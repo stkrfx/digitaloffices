@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    // Modern Node settings
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "target": "ES2023",
+    
+    // Output
+    "outDir": "./dist",
+    "rootDir": "./src",
+    
+    // Safety Checks
+    "strict": true,
+    "esModuleInterop": true,
+    "ignoreDeprecations": "6.0",
+    "skipLibCheck": true,
+    
+    // This allows us to import from the '../shared' folder
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["../shared/*"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules"]
+}
