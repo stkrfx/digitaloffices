@@ -1,0 +1,39 @@
+@baseUrl = http://localhost:3000/api/auth
+
+### 1. REGISTER (Should return "Check your email")
+POST {{baseUrl}}/register
+Content-Type: application/json
+
+{
+  "email": "verify_me@test.com",
+  "password": "password123",
+  "name": "Pending User",
+  "initialRole": "EXPERT"
+}
+
+### 2. TRY LOGIN (Should FAIL with 403 Forbidden)
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "verify_me@test.com",
+  "password": "password123"
+}
+
+### 3. VERIFY EMAIL
+# (Go to Supabase -> Table Editor -> User -> Copy the 'emailVerificationToken')
+POST {{baseUrl}}/verify-email
+Content-Type: application/json
+
+{
+  "token": "PASTE_TOKEN_FROM_DB_HERE"
+}
+
+### 4. LOGIN AGAIN (Should SUCCESS now)
+POST {{baseUrl}}/login
+Content-Type: application/json
+
+{
+  "email": "verify_me@test.com",
+  "password": "password123"
+}

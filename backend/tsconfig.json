@@ -4,22 +4,26 @@
     "module": "ESNext",
     "moduleResolution": "node",
     "target": "ES2023",
-    
     // Output
     "outDir": "./dist",
-    "rootDir": "./src",
-    
+    "rootDir": "../",
     // Safety Checks
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    
     // This allows us to import from the '../shared' folder
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["../shared/*"]
+      "@shared/*": [
+        "../shared/*"
+      ]
     }
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules"]
+  "include": [
+    "src/**/*",
+    "../shared/**/*"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }

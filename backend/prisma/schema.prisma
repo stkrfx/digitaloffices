@@ -17,6 +17,10 @@ model User {
   username String @unique
   name     String
 
+  promotionalEmailsEnabled  Boolean         @default(false)
+  emailNotificationsEnabled Boolean         @default(true)
+  themePreference           ThemePreference @default(SYSTEM)
+
   // USER AVATAR: Casual/Personal (e.g. for Reviews)
   avatarUrl String?
 
@@ -256,4 +260,10 @@ enum BookingStatus {
 enum AdminLevel {
   SUPER_ADMIN
   MODERATOR
+}
+
+enum ThemePreference {
+  LIGHT
+  DARK
+  SYSTEM
 }

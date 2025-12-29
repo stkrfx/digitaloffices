@@ -1,52 +1,98 @@
 // shared/types.ts
 
-// 1. ENUMS (Matches Prisma)
-export enum UserRole {
-    USER = 'USER',
-    EXPERT = 'EXPERT',
-    ADMIN = 'ADMIN',
-    ORGANIZATION = 'ORGANIZATION'
-  }
+// 1. ENUMS (Matching your Database Logic)
+export type UserRole = 'USER' | 'EXPERT' | 'ORGANIZATION' | 'ADMIN';
+
+export enum ServiceType {
+  VIDEO_CALL = 'VIDEO_CALL',
+  IN_PERSON_VISIT = 'IN_PERSON_VISIT'
+}
+
+export enum BookingStatus {
+  PENDING = 'PENDING',
+  CONFIRMED = 'CONFIRMED',
+  CANCELLED = 'CANCELLED',
+  COMPLETED = 'COMPLETED'
+}
+
+// 2. AUTH REQUESTS (Inputs)
+export interface RegisterRequest {
+  email: string;
+  password?: string; // Optional for Google Auth users
+  name: string;      // "John Doe"
   
-  // 2. REQUEST DTOs (Data Transfer Objects - What comes IN)
+  // Marketing Preferences
+  promotionalEmails?: boolean;
   
-  export interface RegisterRequest {
-    email: string;
-    password?: string; // Optional because of Google Login
-    name: string;      // Used to generate username/initials
-    promotionalEmails?: boolean;
-    initialRole?: UserRole; // User can choose to start as Expert directly?
-  }
+  // Does the user want to be an Expert immediately?
+  initialRole?: 'USER' | 'EXPERT' | 'ORGANIZATION'; 
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface GoogleSyncRequest {
+  email: string;
+  googleId: string;
+  name: string;
+  avatarUrl?: string;
+}
+
+// 3. CORE DTOs (Outputs)
+
+// The "Safe" User object sent to Frontend
+export interface UserDto {
+  id: string;
+  username: string; // @mindnamo_user
+  email: string;
+  name: string;
+  avatarUrl: string | null;
   
-  export interface LoginRequest {
-    email: string;
-    password: string;
-  }
-  
-  export interface GoogleSyncRequest {
-    email: string;
-    googleId: string;
+  // Computed Flags (Frontend uses these to show/hide Sidebar items)
+  roles: {
+    isExpert: boolean;
+    isOrganization: boolean;
+    isAdmin: boolean;
+  };
+
+  preferences: {
+    theme: string;
+    notifications: boolean;
+  };
+}
+
+// The Response when Auth succeeds
+export interface AuthResponse {
+  message: string;
+  user: UserDto;
+  // NOTE: Tokens (Access/Refresh) are NOT sent in JSON.
+  // They are sent as HttpOnly Cookies for security.
+}
+
+// 4. FEATURE DTOs (For future use)
+
+export interface ServiceDto {
+  id: string;
+  title: string;
+  price: number;
+  durationMin: number;
+  type: ServiceType;
+}
+
+export interface BookingDto {
+  id: string;
+  startTime: string; // ISO Date String
+  status: BookingStatus;
+  service: ServiceDto;
+  expert: {
     name: string;
-    avatarUrl?: string;
-  }
-  
-  // 3. RESPONSE DTOs (What goes OUT)
-  
-  export interface AuthResponse {
-    message: string;
-    user: {
-      id: string;       // Account ID
-      email: string;
-      roles: {          // Which personas exist?
-        isUser: boolean;
-        isExpert: boolean;
-        isAdmin: boolean;
-        isOrg: boolean;
-      };
-      activePersona?: { // The profile data for the current context
-        username: string;
-        avatarUrl: string | null;
-      }
-    }
-    // Tokens are NOT here. They are in HttpOnly Cookies.
-  }
+    headline: string;
+  };
+}
+
+// New Request DTO for verification
+export interface VerifyEmailRequest {
+  token: string;
+}
