@@ -97,32 +97,6 @@ export interface VerifyEmailRequest {
   token: string;
 }
 
-export interface ServiceDto {
-  id: string;
-  title: string;
-  description: string | null;
-  price: number; // Decimal in DB -> number in JS
-  durationMin: number;
-  type: ServiceType; // Uses the Enum you already defined
-}
-
-export interface BookingDto {
-  id: string;
-  startTime: string; // JSON sends Dates as strings
-  endTime: string;
-  status: BookingStatus;
-  meetingLink: string | null;
-  service: ServiceDto;
-  // expert: {
-  //   id: string;
-  //   headline: string;
-  //   user: {
-  //     name: string;
-  //     avatarUrl: string | null;
-  //  }
-  // };
-}
-
 export interface AvailabilityDto {
   dayOfWeek: number; // 0-6
   startTime: string; // "09:00"

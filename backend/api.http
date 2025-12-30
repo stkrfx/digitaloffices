@@ -1,39 +1,152 @@
-@baseUrl = http://localhost:3000/api/auth
+### ==================================================================================
+### 1. SYSTEM HEALTH
+### ==================================================================================
 
-### 1. REGISTER (Should return "Check your email")
-POST {{baseUrl}}/register
+### Check Server Status
+GET http://localhost:3000/
+
+### ==================================================================================
+### 2. AUTHENTICATION - REGISTRATION
+### ==================================================================================
+
+### A. Register as a REGULAR USER (Customer)
+# Expect: 201 Created, Email sent
+POST http://localhost:3000/api/auth/register
 Content-Type: application/json
 
 {
-  "email": "verify_me@test.com",
-  "password": "password123",
-  "name": "Pending User",
-  "initialRole": "EXPERT"
+    "email": "jane.doe@example.com",
+    "password": "Password123!",
+    "name": "Jane Doe"
 }
 
-### 2. TRY LOGIN (Should FAIL with 403 Forbidden)
-POST {{baseUrl}}/login
+### B. Register as an EXPERT (Should create ExpertProfile)
+# Expect: 201 Created
+POST http://localhost:3000/api/auth/register
 Content-Type: application/json
 
 {
-  "email": "verify_me@test.com",
-  "password": "password123"
+    "email": "dr.smith@example.com",
+    "password": "Password123!",
+    "name": "Dr. Smith",
+    "initialRole": "EXPERT"
 }
 
-### 3. VERIFY EMAIL
-# (Go to Supabase -> Table Editor -> User -> Copy the 'emailVerificationToken')
-POST {{baseUrl}}/verify-email
+### C. Register as an ORGANIZATION (Should create OrganizationProfile)
+# Expect: 201 Created
+POST http://localhost:3000/api/auth/register
 Content-Type: application/json
 
 {
-  "token": "PASTE_TOKEN_FROM_DB_HERE"
+    "email": "contact@healthcorp.com",
+    "password": "Password123!",
+    "name": "Health Corp Admin",
+    "initialRole": "ORGANIZATION"
 }
 
-### 4. LOGIN AGAIN (Should SUCCESS now)
-POST {{baseUrl}}/login
+### D. Test Validation Failure (Invalid Email)
+# Expect: 400 Bad Request
+POST http://localhost:3000/api/auth/register
 Content-Type: application/json
 
 {
-  "email": "verify_me@test.com",
-  "password": "password123"
+    "email": "not-an-email",
+    "password": "123",
+    "name": "Hacker"
 }
+
+### ==================================================================================
+### 3. AUTHENTICATION - VERIFICATION
+### ==================================================================================
+
+### Verify Email
+# 1. Check your Server Console logs for the "emailToken".
+# 2. Paste the token below to simulate the Frontend sending the verification request.
+POST http://localhost:3000/api/auth/verify-email
+Content-Type: application/json
+
+{
+    "token": "PASTE_TOKEN_FROM_CONSOLE_HERE"
+}
+
+### ==================================================================================
+### 4. AUTHENTICATION - LOGIN
+### ==================================================================================
+
+### A. Login - Valid User (Before Verification)
+# Expect: 403 Forbidden (Message: Email not verified)
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{
+    "email": "jane.doe@example.com",
+    "password": "Password123!"
+}
+
+### B. Login - Valid User (After Verification)
+# Expect: 200 OK
+# Note: This will set 'accessToken' and 'refreshToken' cookies in your HTTP Client.
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{
+    "email": "jane.doe@example.com",
+    "password": "Password123!"
+}
+
+### C. Login - Invalid Credentials
+# Expect: 401 Unauthorized
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{
+    "email": "jane.doe@example.com",
+    "password": "WRONG_PASSWORD"
+}
+
+### ==================================================================================
+### 5. TOKEN MANAGEMENT
+### ==================================================================================
+
+### Refresh Access Token
+# This endpoint relies on the 'refreshToken' cookie set during Login.
+# Note: You need to implement "POST /refresh" in your routes for this to work.
+POST http://localhost:3000/api/auth/refresh
+Content-Type: application/json
+
+{}
+
+### Logout
+# Should clear cookies
+POST http://localhost:3000/api/auth/logout
+Content-Type: application/json
+
+{}
+
+### ==================================================================================
+### 6. [HYPOTHETICAL] MARKETPLACE ROUTES (Based on Schema)
+### Implement these routes in your backend to make these work.
+### ==================================================================================
+
+### Create a Service (Expert Only)
+# POST http://localhost:3000/api/services
+# Content-Type: application/json
+
+# {
+#     "title": "1 Hour Consultation",
+#     "description": "Deep dive into your health.",
+#     "price": 150.00,
+#     "durationMin": 60,
+#     "type": "VIDEO_CALL",
+#     "expertId": "EXPERT_ID_HERE"
+# }
+
+### Book an Appointment
+# POST http://localhost:3000/api/bookings
+# Content-Type: application/json
+
+# {
+#     "serviceId": "SERVICE_ID_HERE",
+#     "expertId": "EXPERT_ID_HERE",
+#     "startTime": "2025-01-20T10:00:00Z"
+# }

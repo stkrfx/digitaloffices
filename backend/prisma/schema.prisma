@@ -34,6 +34,7 @@ model User {
   // Security Fields
   emailVerifiedAt        DateTime?
   emailVerificationToken String?   @unique
+  emailVerificationExpiresAt DateTime?
   passwordResetToken     String?   @unique
   passwordResetExpires   DateTime?
 
@@ -82,6 +83,9 @@ model ExpertProfile {
   headline    String
   bio         String?
   address     String?
+
+  latitude  Float? // e.g. -33.8688
+  longitude Float? // e.g. 151.2093
 
   availability Availability[]
 

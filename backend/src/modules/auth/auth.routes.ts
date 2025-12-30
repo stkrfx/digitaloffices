@@ -6,11 +6,42 @@ import { generateUniqueUsername } from '../../utils/username.js';
 import { RegisterRequest, LoginRequest, AuthResponse, UserRole, VerifyEmailRequest } from '@shared/types';
 import { sendVerificationEmail } from '../../utils/mailer.js';
 import { validateEmailStrict } from '../../utils/emailValidator.js';
+import { OAuth2Client } from 'google-auth-library';
+
+// Initialize the Google Client (outside the function)
+const googleClient = new OAuth2Client(
+    process.env.GOOGLE_CLIENT_ID // Ensure this is in your .env
+);
+
+const registerSchema = {
+    body: {
+        type: 'object',
+        required: ['email', 'password', 'name'],
+        properties: {
+            email: { type: 'string', format: 'email' },
+            password: { type: 'string', minLength: 8 }, // Enforce complexity here
+            name: { type: 'string', minLength: 2 },
+            promotionalEmails: { type: 'boolean' },
+            initialRole: { type: 'string', enum: ['USER', 'EXPERT', 'ORGANIZATION'] }
+        }
+    }
+};
+
+const loginSchema = {
+    body: {
+        type: 'object',
+        required: ['email', 'password'],
+        properties: {
+            email: { type: 'string', format: 'email' },
+            password: { type: 'string' }
+        }
+    }
+};
 
 export default async function authRoutes(fastify: FastifyInstance) {
 
     // REGISTER ROUTE
-    fastify.post<{ Body: RegisterRequest }>('/register', async (request, reply) => {
+    fastify.post<{ Body: RegisterRequest }>('/register', { schema: registerSchema }, async (request, reply) => {
         const { email, password, name, promotionalEmails, initialRole } = request.body;
 
         // --- NEW SECURITY CHECK ---
@@ -49,6 +80,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
                     passwordHash,
                     promotionalEmailsEnabled: promotionalEmails || false,
                     emailVerificationToken: emailToken,
+                    // ADD THIS (24 hour expiry):
+                    emailVerificationExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
                     emailVerifiedAt: null, // does putting this null thing here should be done as per the gold standard or no??????
                     // If they selected EXPERT, we can create an empty profile stub
                     // or handle it in a separate onboarding step. 
@@ -85,9 +118,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
         });
     });
 
-
     // LOGIN ROUTE
-    fastify.post<{ Body: LoginRequest }>('/login', async (request, reply) => {
+    fastify.post<{ Body: LoginRequest }>('/login', { schema: loginSchema }, async (request, reply) => {
         const { email, password } = request.body;
 
         // 1. Find User & Fetch Roles
@@ -153,10 +185,11 @@ export default async function authRoutes(fastify: FastifyInstance) {
         // 6. Set Cookies (The Gold Standard)
 
         // Cookie A: Access Token (Strict security)
+
         reply.setCookie('accessToken', accessToken, {
             path: '/',
             httpOnly: true, // JavaScript cannot read this (Anti-XSS)
-            secure: false,  // Set to TRUE in production (HTTPS)
+            secure: process.env.NODE_ENV === 'production',  // Set to TRUE in production (HTTPS)
             sameSite: 'lax',
             maxAge: 15 * 60 // 15 minutes
         });
@@ -165,7 +198,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
         reply.setCookie('refreshToken', refreshToken, {
             path: '/api/auth/refresh', // Security: Only send this to the refresh route!
             httpOnly: true,
-            secure: false,
+            secure: process.env.NODE_ENV === 'production',
             sameSite: 'lax',
             maxAge: 7 * 24 * 60 * 60 // 7 days
         });
@@ -194,6 +227,139 @@ export default async function authRoutes(fastify: FastifyInstance) {
         } as AuthResponse);
     });
 
+    // GOOGLE IDENTITY SWAP (Gold Standard)
+    fastify.post<{ Body: { idToken: string } }>('/google', async (request, reply) => {
+        const { idToken } = request.body;
+
+        // 1. Verify the Google Token (Backend Validation)
+        let ticket;
+        try {
+            ticket = await googleClient.verifyIdToken({
+                idToken,
+                audience: process.env.GOOGLE_CLIENT_ID,
+            });
+        } catch (err) {
+            return reply.status(401).send({ message: 'Invalid Google Token' });
+        }
+
+        const payload = ticket.getPayload();
+        if (!payload || !payload.email) {
+            return reply.status(400).send({ message: 'Incomplete Google Profile' });
+        }
+
+        const { email, sub: googleId, name, picture } = payload;
+
+        // 2. Find or Create User
+        // Strategy: Link by GoogleID first. If not found, link by Email. If neither, Create.
+        
+        let user = await prisma.user.findUnique({
+            where: { googleId },
+            include: { expertProfile: true, organizationProfile: true, adminProfile: true }
+        });
+
+        if (!user) {
+            // Check if user exists by email (Account Linking)
+            const existingEmailUser = await prisma.user.findUnique({
+                where: { email },
+                include: { expertProfile: true, organizationProfile: true, adminProfile: true }
+            });
+
+            if (existingEmailUser) {
+                // LINK ACCOUNTS
+                user = await prisma.user.update({
+                    where: { id: existingEmailUser.id },
+                    data: { 
+                        googleId, 
+                        avatarUrl: existingEmailUser.avatarUrl || picture, // Update avatar if missing
+                        emailVerifiedAt: new Date() // Trust Google: Mark email as verified
+                    },
+                    include: { expertProfile: true, organizationProfile: true, adminProfile: true }
+                });
+            } else {
+                // CREATE NEW USER
+                const username = await generateUniqueUsername();
+                user = await prisma.user.create({
+                    data: {
+                        email,
+                        name: name || 'Google User',
+                        username,
+                        googleId,
+                        avatarUrl: picture,
+                        emailVerifiedAt: new Date(), // Verified by Google
+                        // Default Preferences
+                        promotionalEmailsEnabled: false, 
+                    },
+                    include: { expertProfile: true, organizationProfile: true, adminProfile: true }
+                });
+            }
+        }
+
+        // 3. Security Checks (Same as standard Login)
+        if (user.deletedAt) {
+            return reply.status(403).send({ message: 'Account is disabled.' });
+        }
+
+        // 4. Generate Tokens (The Swap)
+        const accessToken = fastify.jwt.sign({
+            id: user.id,
+            roles: {
+                isExpert: !!user.expertProfile,
+                isOrg: !!user.organizationProfile,
+                isAdmin: !!user.adminProfile
+            }
+        }, { expiresIn: '15m' });
+
+        const refreshToken = crypto.randomBytes(40).toString('hex');
+        const refreshTokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+
+        await prisma.refreshSession.create({
+            data: {
+                userId: user.id,
+                tokenHash: refreshTokenHash,
+                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                ipAddress: request.ip,
+                userAgent: request.headers['user-agent'] || 'unknown'
+            }
+        });
+
+        // 5. Set Cookies & Reply
+        reply.setCookie('accessToken', accessToken, {
+            path: '/',
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 15 * 60
+        });
+
+        reply.setCookie('refreshToken', refreshToken, {
+            path: '/api/auth/refresh',
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60
+        });
+
+        return reply.status(200).send({
+            message: 'Google Login Successful',
+            user: {
+                id: user.id,
+                email: user.email,
+                username: user.username,
+                name: user.name,
+                avatarUrl: user.avatarUrl,
+                roles: {
+                    isExpert: !!user.expertProfile,
+                    isOrganization: !!user.organizationProfile,
+                    isAdmin: !!user.adminProfile
+                },
+                preferences: {
+                    theme: user.themePreference,
+                    notifications: user.emailNotificationsEnabled
+                }
+            }
+        });
+    });
+
     fastify.post<{ Body: VerifyEmailRequest }>('/verify-email', async (request, reply) => {
         const { token } = request.body;
 
@@ -205,16 +371,197 @@ export default async function authRoutes(fastify: FastifyInstance) {
             return reply.status(400).send({ message: 'Invalid or expired token' });
         }
 
+        // Check 2: Token expired?
+        if (user.emailVerificationExpiresAt && user.emailVerificationExpiresAt < new Date()) {
+            return reply.status(400).send({ 
+                message: 'Token expired. Please request a new one.',
+                code: 'TOKEN_EXPIRED' // Frontend can use this to show "Resend" button
+            });
+        }
+
         await prisma.user.update({
             where: { id: user.id },
             data: {
                 emailVerifiedAt: new Date(),
-                emailVerificationToken: null
+                emailVerificationToken: null,
+                emailVerificationExpiresAt: null // Clear the expiry
             }
         });
 
         return reply.status(200).send({
             message: 'Email verified successfully. You may now login.'
+        });
+    });
+
+    // REFRESH ROUTE (The Gold Standard Rotation Logic)
+    fastify.post('/refresh', async (request, reply) => {
+        const refreshToken = request.cookies.refreshToken;
+        if (!refreshToken) return reply.status(401).send({ message: 'No refresh token' });
+
+        // 1. Hash the token to find it in DB
+        const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+
+        const session = await prisma.refreshSession.findUnique({
+            where: { tokenHash },
+            include: { user: { include: { expertProfile: true, organizationProfile: true, adminProfile: true } } }
+        });
+
+        // 2. Security: If session invalid or expired
+        if (!session || session.expiresAt < new Date()) {
+            // Optional: Delete expired session if found
+            if (session) await prisma.refreshSession.delete({ where: { id: session.id } });
+
+            reply.clearCookie('accessToken');
+            reply.clearCookie('refreshToken', { path: '/api/auth/refresh' });
+            return reply.status(401).send({ message: 'Session expired' });
+        }
+
+        // 3. Detect Reuse / Rotation (Optional but Recommended)
+        // If you implement strict rotation, you delete the old session and create a new one here.
+        // For now, we will just issue a new Access Token.
+
+        const { user } = session;
+
+        // 4. Generate New Access Token
+        const newAccessToken = fastify.jwt.sign({
+            id: user.id,
+            roles: {
+                isExpert: !!user.expertProfile,
+                isOrg: !!user.organizationProfile,
+                isAdmin: !!user.adminProfile
+            }
+        }, { expiresIn: '15m' });
+
+
+        reply.setCookie('accessToken', newAccessToken, {
+            path: '/',
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 15 * 60
+        });
+
+        return reply.status(200).send({ message: 'Token refreshed' });
+    });
+
+    // LOGOUT ROUTE
+    fastify.post('/logout', async (request, reply) => {
+        const refreshToken = request.cookies.refreshToken;
+
+        // 1. Remove from DB if exists
+        if (refreshToken) {
+            const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+            // Use deleteMany to avoid error if it doesn't exist
+            await prisma.refreshSession.deleteMany({ where: { tokenHash } });
+        }
+
+        // 2. Clear Cookies
+        reply.clearCookie('accessToken', { path: '/' });
+        reply.clearCookie('refreshToken', { path: '/api/auth/refresh' });
+
+        return reply.status(200).send({ message: 'Lxogged out successfully' });
+    });
+
+    fastify.post<{ Body: { email: string } }>('/resend-verification', {
+        // GOLD STANDARD: Strict Rate Limiting for Email Triggers
+        config: {
+            rateLimit: {
+                max: 3,             // Only 3 attempts...
+                timeWindow: '1 hour' // ...per hour per IP
+            }
+        }
+    }, async (request, reply) => {
+        const { email } = request.body;
+
+        const user = await prisma.user.findUnique({ where: { email } });
+
+        // Security: Always return 200 OK even if email not found (prevents enumeration)
+        // Only proceed if user exists AND is not verified
+        if (user && !user.emailVerifiedAt) {
+            
+            // 1. Generate NEW Token
+            const newToken = crypto.randomBytes(32).toString('hex');
+            const newExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h from now
+
+            // 2. Update DB
+            await prisma.user.update({
+                where: { id: user.id },
+                data: {
+                    emailVerificationToken: newToken,
+                    emailVerificationExpiresAt: newExpiry
+                }
+            });
+
+            // 3. Send Email
+            try {
+                await sendVerificationEmail(user.email, newToken);
+            } catch (error) {
+                request.log.error(error, 'Failed to send verification email');
+                // Ideally, don't crash request, just log it.
+            }
+        }
+
+        return reply.status(200).send({
+            message: 'If an unverified account exists with this email, a new link has been sent.'
+        });
+    });
+
+    // DELETE ACCOUNT (GDPR Compliant Soft Delete)
+    fastify.delete('/me', async (request, reply) => {
+        // 1. Authenticate
+        try {
+            await request.jwtVerify();
+        } catch (err) {
+            return reply.status(401).send({ message: 'Unauthorized' });
+        }
+        
+        const user = request.user as { id: string };
+
+        // 2. Perform Anonymization Transaction
+        await prisma.$transaction(async (tx) => {
+            // Check if already deleted
+            const existing = await tx.user.findUnique({ where: { id: user.id } });
+            if (!existing || existing.deletedAt) {
+                 // Should technically be 404, but 200 is safer for idempotency
+                 return;
+            }
+
+            // Anonymize PII (Gold Standard Pattern)
+            // We append a timestamp/UUID to ensure the "deleted" values are also unique
+            const anonymizedSuffix = `deleted_${crypto.randomBytes(8).toString('hex')}`;
+
+            await tx.user.update({
+                where: { id: user.id },
+                data: {
+                    // SCRAMBLE UNIQUE PII
+                    name: 'Deleted User',
+                    email: `${anonymizedSuffix}@deleted.local`, // Frees up real email
+                    username: anonymizedSuffix,                 // Frees up real username
+                    
+                    // CLEAR OPTIONAL UNIQUE/SENSITIVE FIELDS
+                    avatarUrl: null,
+                    googleId: null,             // Crucial: allows re-linking Google later
+                    passwordHash: null,         // Security: cannot login even if restored
+                    
+                    // CLEAR TOKENS
+                    emailVerificationToken: null,
+                    passwordResetToken: null,
+                    refreshSessions: { deleteMany: {} }, // Kill all active sessions
+
+                    // MARK DELETED
+                    deletedAt: new Date(),
+                }
+            });
+
+            // OPTIONAL: Cancel future bookings or other cleanup logic here
+        });
+
+        // 3. Clear Cookies
+        reply.clearCookie('accessToken');
+        reply.clearCookie('refreshToken');
+
+        return reply.status(200).send({
+            message: 'Account deleted successfully. Your data has been anonymized.'
         });
     });
 
