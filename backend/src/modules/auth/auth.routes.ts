@@ -8,10 +8,7 @@ import { sendVerificationEmail } from '../../utils/mailer.js';
 import { validateEmailStrict } from '../../utils/emailValidator.js';
 import { OAuth2Client } from 'google-auth-library';
 
-// Initialize the Google Client (outside the function)
-const googleClient = new OAuth2Client(
-    process.env.GOOGLE_CLIENT_ID // Ensure this is in your .env
-);
+
 
 const registerSchema = {
     body: {
@@ -39,6 +36,11 @@ const loginSchema = {
 };
 
 export default async function authRoutes(fastify: FastifyInstance) {
+
+    // Initialize the Google Client (outside the function)
+    const googleClient = new OAuth2Client(
+        process.env.GOOGLE_CLIENT_ID // Ensure this is in your .env
+    );
 
     // REGISTER ROUTE
     fastify.post<{ Body: RegisterRequest }>('/register', { schema: registerSchema }, async (request, reply) => {
@@ -82,7 +84,6 @@ export default async function authRoutes(fastify: FastifyInstance) {
                     emailVerificationToken: emailToken,
                     // ADD THIS (24 hour expiry):
                     emailVerificationExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-                    emailVerifiedAt: null, // does putting this null thing here should be done as per the gold standard or no??????
                     // If they selected EXPERT, we can create an empty profile stub
                     // or handle it in a separate onboarding step. 
                     // For now, we just create the User identity.
@@ -228,7 +229,18 @@ export default async function authRoutes(fastify: FastifyInstance) {
     });
 
     // GOOGLE IDENTITY SWAP (Gold Standard)
-    fastify.post<{ Body: { idToken: string } }>('/google', async (request, reply) => {
+    fastify.post<{ Body: { idToken: string } }>('/google', {
+        // ADD THIS SCHEMA BLOCK
+        schema: {
+            body: {
+                type: 'object',
+                required: ['idToken'],
+                properties: {
+                    idToken: { type: 'string' }
+                }
+            }
+        }
+    }, async (request, reply) => {
         const { idToken } = request.body;
 
         // 1. Verify the Google Token (Backend Validation)
@@ -251,7 +263,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
         // 2. Find or Create User
         // Strategy: Link by GoogleID first. If not found, link by Email. If neither, Create.
-        
+
         let user = await prisma.user.findUnique({
             where: { googleId },
             include: { expertProfile: true, organizationProfile: true, adminProfile: true }
@@ -268,8 +280,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
                 // LINK ACCOUNTS
                 user = await prisma.user.update({
                     where: { id: existingEmailUser.id },
-                    data: { 
-                        googleId, 
+                    data: {
+                        googleId,
                         avatarUrl: existingEmailUser.avatarUrl || picture, // Update avatar if missing
                         emailVerifiedAt: new Date() // Trust Google: Mark email as verified
                     },
@@ -287,7 +299,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
                         avatarUrl: picture,
                         emailVerifiedAt: new Date(), // Verified by Google
                         // Default Preferences
-                        promotionalEmailsEnabled: false, 
+                        promotionalEmailsEnabled: false,
                     },
                     include: { expertProfile: true, organizationProfile: true, adminProfile: true }
                 });
@@ -373,7 +385,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
         // Check 2: Token expired?
         if (user.emailVerificationExpiresAt && user.emailVerificationExpiresAt < new Date()) {
-            return reply.status(400).send({ 
+            return reply.status(400).send({
                 message: 'Token expired. Please request a new one.',
                 code: 'TOKEN_EXPIRED' // Frontend can use this to show "Resend" button
             });
@@ -420,7 +432,24 @@ export default async function authRoutes(fastify: FastifyInstance) {
         // If you implement strict rotation, you delete the old session and create a new one here.
         // For now, we will just issue a new Access Token.
 
+        await prisma.refreshSession.delete({ where: { id: session.id } });
+
+        // B. Generate NEW Refresh Token (Rotate)
         const { user } = session;
+        const newRefreshToken = crypto.randomBytes(40).toString('hex');
+        const newRefreshTokenHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
+
+        // C. Create NEW Session
+        await prisma.refreshSession.create({
+            data: {
+                userId: user.id,
+                tokenHash: newRefreshTokenHash,
+                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                ipAddress: request.ip,
+                userAgent: request.headers['user-agent'] || 'unknown'
+            }
+        });
+
 
         // 4. Generate New Access Token
         const newAccessToken = fastify.jwt.sign({
@@ -433,6 +462,27 @@ export default async function authRoutes(fastify: FastifyInstance) {
         }, { expiresIn: '15m' });
 
 
+        // C. Store New Session
+        await prisma.refreshSession.create({
+            data: {
+                userId: user.id,
+                tokenHash: newRefreshTokenHash,
+                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+                ipAddress: request.ip,
+                userAgent: request.headers['user-agent'] || 'unknown'
+            }
+        });
+
+        // D. Set New Refresh Cookie
+        reply.setCookie('refreshToken', newRefreshToken, {
+            path: '/api/auth/refresh',
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60
+        });
+
+        // E. Set New Access Cookie
         reply.setCookie('accessToken', newAccessToken, {
             path: '/',
             httpOnly: true,
@@ -478,7 +528,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
         // Security: Always return 200 OK even if email not found (prevents enumeration)
         // Only proceed if user exists AND is not verified
         if (user && !user.emailVerifiedAt) {
-            
+
             // 1. Generate NEW Token
             const newToken = crypto.randomBytes(32).toString('hex');
             const newExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h from now
@@ -514,7 +564,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
         } catch (err) {
             return reply.status(401).send({ message: 'Unauthorized' });
         }
-        
+
         const user = request.user as { id: string };
 
         // 2. Perform Anonymization Transaction
@@ -522,8 +572,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
             // Check if already deleted
             const existing = await tx.user.findUnique({ where: { id: user.id } });
             if (!existing || existing.deletedAt) {
-                 // Should technically be 404, but 200 is safer for idempotency
-                 return;
+                // Should technically be 404, but 200 is safer for idempotency
+                return;
             }
 
             // Anonymize PII (Gold Standard Pattern)
@@ -537,12 +587,12 @@ export default async function authRoutes(fastify: FastifyInstance) {
                     name: 'Deleted User',
                     email: `${anonymizedSuffix}@deleted.local`, // Frees up real email
                     username: anonymizedSuffix,                 // Frees up real username
-                    
+
                     // CLEAR OPTIONAL UNIQUE/SENSITIVE FIELDS
                     avatarUrl: null,
                     googleId: null,             // Crucial: allows re-linking Google later
                     passwordHash: null,         // Security: cannot login even if restored
-                    
+
                     // CLEAR TOKENS
                     emailVerificationToken: null,
                     passwordResetToken: null,

@@ -7,6 +7,7 @@ import fastifyRedis from '@fastify/redis';
 import { fastifySchedule } from '@fastify/schedule';
 import { AsyncTask, SimpleIntervalJob } from 'toad-scheduler';
 import { prisma } from './db/index.js'; // Ensure correct import path
+import helmet from '@fastify/helmet';
 
 import authRoutes from './modules/auth/auth.routes.js';
 import expertRoutes from './modules/expert/expert.routes.js';
@@ -26,14 +27,19 @@ requiredEnv.forEach((key) => {
 
 const app = Fastify({ logger: true, trustProxy: true });
 
+await app.register(helmet);
+
 /* ------------------------------------------------------------------
  * 2. REGISTER SECURITY & CORE PLUGINS
  * ------------------------------------------------------------------ */
 
 // 1. Register Security Plugins
 app.register(cors, {
-  origin: true, // Allow all for dev (Change to frontend URL in prod)
-  credentials: true // Crucial for Cookies to work!
+  // Gold Standard: Restrict origin in production
+  origin: process.env.NODE_ENV === 'production'
+    ? [process.env.FRONTEND_URL as string]
+    : true,
+  credentials: true
 })
 
 // 1. REGISTER SCHEDULER (Place this with other plugins)
@@ -72,34 +78,34 @@ await app.register(fastifyRedis, {
 // 1. GENERATE SPECIFICATION
 await app.register(fastifySwagger, {
   openapi: {
-      info: {
-          title: 'Digital Offices API',
-          description: 'API Documentation for the Digital Offices Platform',
-          version: '1.0.0',
-      },
-      servers: [
-          {
-              url: 'http://localhost:3000', // Update with process.env.API_URL in prod
-              description: 'Development Server'
-          }
-      ],
-      components: {
-          securitySchemes: {
-              // Define how we authenticate
-              cookieAuth: {
-                  type: 'apiKey',
-                  in: 'cookie',
-                  name: 'accessToken'
-              },
-              bearerAuth: {
-                  type: 'http',
-                  scheme: 'bearer',
-                  bearerFormat: 'JWT'
-              }
-          }
-      },
-      // Apply security globally (Optional: can also be done per-route)
-      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+    info: {
+      title: 'Digital Offices API',
+      description: 'API Documentation for the Digital Offices Platform',
+      version: '1.0.0',
+    },
+    servers: [
+      {
+        url: process.env.API_URL || 'http://localhost:3000',
+        description: process.env.NODE_ENV === 'production' ? 'Production Server' : 'Development Server'
+      }
+    ],
+    components: {
+      securitySchemes: {
+        // Define how we authenticate
+        cookieAuth: {
+          type: 'apiKey',
+          in: 'cookie',
+          name: 'accessToken'
+        },
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT'
+        }
+      }
+    },
+    // Apply security globally (Optional: can also be done per-route)
+    security: [{ cookieAuth: [] }, { bearerAuth: [] }]
   }
 });
 
@@ -107,8 +113,8 @@ await app.register(fastifySwagger, {
 await app.register(fastifySwaggerUi, {
   routePrefix: '/documentation', // Access docs at http://localhost:3000/documentation
   uiConfig: {
-      docExpansion: 'list', // 'none' | 'list' | 'full'
-      deepLinking: true
+    docExpansion: 'list', // 'none' | 'list' | 'full'
+    deepLinking: true
   },
   staticCSP: true, // Secure Content Security Policy
   transformStaticCSP: (header) => header
@@ -130,7 +136,7 @@ app.register(rateLimit, {
   global: true,                 // Protect ALL routes
   max: 100,                     // 100 requests
   timeWindow: '1 minute',       // per minute
-  redis: app.redis, // ❌ COMMENT THIS LINE (uses in-memory RAM store instead)
+  redis: app.redis,
 
   errorResponseBuilder: (req, context) => ({
     statusCode: 429,

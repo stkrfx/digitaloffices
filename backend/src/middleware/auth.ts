@@ -23,9 +23,7 @@ export const authenticate = async (request: FastifyRequest, reply: FastifyReply)
  */
 export const authorize = (allowedRoles: UserRole[]) => {
     return async (request: FastifyRequest, reply: FastifyReply) => {
-        const user = request.user as { 
-            roles: { isExpert: boolean; isOrg: boolean; isAdmin: boolean } 
-        };
+        const user = request.user;
 
         if (!user) {
             return reply.status(401).send({ message: 'Unauthorized' });
