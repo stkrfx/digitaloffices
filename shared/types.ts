@@ -20,12 +20,12 @@ export interface RegisterRequest {
   email: string;
   password?: string; // Optional for Google Auth users
   name: string;      // "John Doe"
-  
+
   // Marketing Preferences
   promotionalEmails?: boolean;
-  
+
   // Does the user want to be an Expert immediately?
-  initialRole?: 'USER' | 'EXPERT' | 'ORGANIZATION'; 
+  initialRole?: 'USER' | 'EXPERT' | 'ORGANIZATION';
 }
 
 export interface LoginRequest {
@@ -49,7 +49,7 @@ export interface UserDto {
   email: string;
   name: string;
   avatarUrl: string | null;
-  
+
   // Computed Flags (Frontend uses these to show/hide Sidebar items)
   roles: {
     isExpert: boolean;
@@ -95,4 +95,37 @@ export interface BookingDto {
 // New Request DTO for verification
 export interface VerifyEmailRequest {
   token: string;
+}
+
+export interface ServiceDto {
+  id: string;
+  title: string;
+  description: string | null;
+  price: number; // Decimal in DB -> number in JS
+  durationMin: number;
+  type: ServiceType; // Uses the Enum you already defined
+}
+
+export interface BookingDto {
+  id: string;
+  startTime: string; // JSON sends Dates as strings
+  endTime: string;
+  status: BookingStatus;
+  meetingLink: string | null;
+  service: ServiceDto;
+  // expert: {
+  //   id: string;
+  //   headline: string;
+  //   user: {
+  //     name: string;
+  //     avatarUrl: string | null;
+  //  }
+  // };
+}
+
+export interface AvailabilityDto {
+  dayOfWeek: number; // 0-6
+  startTime: string; // "09:00"
+  endTime: string;   // "17:00"
+  isActive: boolean;
 }

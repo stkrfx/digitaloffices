@@ -14,7 +14,8 @@ const transporter = nodemailer.createTransport({
 export async function sendVerificationEmail(email: string, token: string) {
   // In a real app, this URL comes from an Env Var (e.g., https://digitaloffices.com)
   // This points to your FRONTEND page, which will then call the Backend API
-  const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
+  const baseUrl = process.env.API_URL || 'http://localhost:3000'; // Define API_URL in .env later
+  const verificationLink = `${baseUrl}/api/auth/verify-email?token=${token}`;
 
   const mailOptions = {
     from: '"Digital Offices Security" <noreply@digitaloffices.com>',

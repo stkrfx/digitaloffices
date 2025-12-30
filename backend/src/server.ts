@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import fjwt from '@fastify/jwt';
 import fcookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
+import cors from '@fastify/cors'
 import Redis from 'ioredis';
 
 import authRoutes from './modules/auth/auth.routes.js';
@@ -16,6 +17,12 @@ const app = Fastify({ logger: true });
 /* ------------------------------------------------------------------
  * 2. REGISTER SECURITY & CORE PLUGINS
  * ------------------------------------------------------------------ */
+
+// 1. Register Security Plugins
+app.register(cors, { 
+  origin: true, // Allow all for dev (Change to frontend URL in prod)
+  credentials: true // Crucial for Cookies to work!
+})
 
 // JWT Authentication
 app.register(fjwt, {

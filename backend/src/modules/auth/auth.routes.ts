@@ -84,7 +84,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
             message: 'Account created. Please check your email to verify.',
         });
     });
-    
+
 
     // LOGIN ROUTE
     fastify.post<{ Body: LoginRequest }>('/login', async (request, reply) => {
@@ -103,6 +103,12 @@ export default async function authRoutes(fastify: FastifyInstance) {
         if (!user || !user.passwordHash) {
             // Security: Generic error message to prevent email enumeration
             return reply.status(401).send({ message: 'Invalid credentials' });
+        }
+
+        // [>>> INSERT THIS BLOCK <<<]
+        // CHECK 1: Is account deleted? (Soft Delete)
+        if (user.deletedAt) {
+            return reply.status(403).send({ message: 'Account is disabled or deleted.' });
         }
 
         if (!user.emailVerifiedAt) {
