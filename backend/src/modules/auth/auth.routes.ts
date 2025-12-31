@@ -7,7 +7,7 @@ import { RegisterRequest, LoginRequest, AuthResponse, UserRole, VerifyEmailReque
 import { sendVerificationEmail } from '../../utils/mailer.js';
 import { validateEmailStrict } from '../../utils/emailValidator.js';
 import { OAuth2Client } from 'google-auth-library';
-
+import { authenticate } from '../../middleware/auth.js';
 
 
 const registerSchema = {
@@ -41,6 +41,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
     const googleClient = new OAuth2Client(
         process.env.GOOGLE_CLIENT_ID // Ensure this is in your .env
     );
+
+    const isProduction = process.env.NODE_ENV === 'production';
+    const cookieDomain = isProduction ? '.digitaloffices.com.au' : undefined;
 
     // REGISTER ROUTE
     fastify.post<{ Body: RegisterRequest }>('/register', { schema: registerSchema }, async (request, reply) => {
@@ -189,8 +192,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
         reply.setCookie('accessToken', accessToken, {
             path: '/',
+            domain: cookieDomain,
             httpOnly: true, // JavaScript cannot read this (Anti-XSS)
-            secure: process.env.NODE_ENV === 'production',  // Set to TRUE in production (HTTPS)
+            secure: isProduction,  // Set to TRUE in production (HTTPS)
             sameSite: 'lax',
             maxAge: 15 * 60 // 15 minutes
         });
@@ -198,8 +202,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
         // Cookie B: Refresh Token (Only sent to refresh endpoint)
         reply.setCookie('refreshToken', refreshToken, {
             path: '/api/auth/refresh', // Security: Only send this to the refresh route!
+            domain: cookieDomain,
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: isProduction,
             sameSite: 'lax',
             maxAge: 7 * 24 * 60 * 60 // 7 days
         });
@@ -229,21 +234,11 @@ export default async function authRoutes(fastify: FastifyInstance) {
     });
 
     // GOOGLE IDENTITY SWAP (Gold Standard)
-    fastify.post<{ Body: { idToken: string } }>('/google', {
-        // ADD THIS SCHEMA BLOCK
-        schema: {
-            body: {
-                type: 'object',
-                required: ['idToken'],
-                properties: {
-                    idToken: { type: 'string' }
-                }
-            }
-        }
-    }, async (request, reply) => {
+    // GOOGLE IDENTITY SWAP ROUTE
+    fastify.post<{ Body: { idToken: string } }>('/google', async (request, reply) => {
         const { idToken } = request.body;
 
-        // 1. Verify the Google Token (Backend Validation)
+        // 1. Verify the Google Token
         let ticket;
         try {
             ticket = await googleClient.verifyIdToken({
@@ -262,33 +257,31 @@ export default async function authRoutes(fastify: FastifyInstance) {
         const { email, sub: googleId, name, picture } = payload;
 
         // 2. Find or Create User
-        // Strategy: Link by GoogleID first. If not found, link by Email. If neither, Create.
-
         let user = await prisma.user.findUnique({
             where: { googleId },
             include: { expertProfile: true, organizationProfile: true, adminProfile: true }
         });
 
         if (!user) {
-            // Check if user exists by email (Account Linking)
+            // Account Linking: Check if email exists
             const existingEmailUser = await prisma.user.findUnique({
                 where: { email },
                 include: { expertProfile: true, organizationProfile: true, adminProfile: true }
             });
 
             if (existingEmailUser) {
-                // LINK ACCOUNTS
+                // Link Google to existing account
                 user = await prisma.user.update({
                     where: { id: existingEmailUser.id },
                     data: {
                         googleId,
-                        avatarUrl: existingEmailUser.avatarUrl || picture, // Update avatar if missing
-                        emailVerifiedAt: new Date() // Trust Google: Mark email as verified
+                        avatarUrl: existingEmailUser.avatarUrl || picture,
+                        emailVerifiedAt: new Date() // Trust Google verification
                     },
                     include: { expertProfile: true, organizationProfile: true, adminProfile: true }
                 });
             } else {
-                // CREATE NEW USER
+                // Create New User
                 const username = await generateUniqueUsername();
                 user = await prisma.user.create({
                     data: {
@@ -297,21 +290,20 @@ export default async function authRoutes(fastify: FastifyInstance) {
                         username,
                         googleId,
                         avatarUrl: picture,
-                        emailVerifiedAt: new Date(), // Verified by Google
-                        // Default Preferences
-                        promotionalEmailsEnabled: false,
+                        emailVerifiedAt: new Date(),
+                        promotionalEmailsEnabled: false
                     },
                     include: { expertProfile: true, organizationProfile: true, adminProfile: true }
                 });
             }
         }
 
-        // 3. Security Checks (Same as standard Login)
+        // 3. Security Check
         if (user.deletedAt) {
             return reply.status(403).send({ message: 'Account is disabled.' });
         }
 
-        // 4. Generate Tokens (The Swap)
+        // 4. Generate Tokens
         const accessToken = fastify.jwt.sign({
             id: user.id,
             roles: {
@@ -328,25 +320,30 @@ export default async function authRoutes(fastify: FastifyInstance) {
             data: {
                 userId: user.id,
                 tokenHash: refreshTokenHash,
-                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
                 ipAddress: request.ip,
                 userAgent: request.headers['user-agent'] || 'unknown'
             }
         });
 
-        // 5. Set Cookies & Reply
+        // 5. Set Cookies (Production Ready)
+        const isProduction = process.env.NODE_ENV === 'production';
+        const cookieDomain = isProduction ? '.digitaloffices.com.au' : undefined;
+
         reply.setCookie('accessToken', accessToken, {
             path: '/',
+            domain: cookieDomain, // Allows subdomains
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: isProduction,
             sameSite: 'lax',
             maxAge: 15 * 60
         });
 
         reply.setCookie('refreshToken', refreshToken, {
             path: '/api/auth/refresh',
+            domain: cookieDomain,
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: isProduction,
             sameSite: 'lax',
             maxAge: 7 * 24 * 60 * 60
         });
@@ -477,7 +474,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
         reply.setCookie('refreshToken', newRefreshToken, {
             path: '/api/auth/refresh',
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: isProduction,
             sameSite: 'lax',
             maxAge: 7 * 24 * 60 * 60
         });
@@ -486,7 +483,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
         reply.setCookie('accessToken', newAccessToken, {
             path: '/',
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: isProduction,
             sameSite: 'lax',
             maxAge: 15 * 60
         });
@@ -557,7 +554,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
     });
 
     // DELETE ACCOUNT (GDPR Compliant Soft Delete)
-    fastify.delete('/me', async (request, reply) => {
+    fastify.delete('/me',{
+        onRequest: [authenticate] // Cleaner and consistent
+    }, async (request, reply) => {
         // 1. Authenticate
         try {
             await request.jwtVerify();

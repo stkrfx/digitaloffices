@@ -1,7 +1,8 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
+import { UserRole } from '@shared/types';
 
 // Define the Roles allowed in your app
-export type UserRole = 'EXPERT' | 'ORGANIZATION' | 'ADMIN';
+// export type UserRole = 'EXPERT' | 'ORGANIZATION' | 'ADMIN';
 
 /**
  * 1. AUTHENTICATION GUARD
@@ -11,7 +12,7 @@ export type UserRole = 'EXPERT' | 'ORGANIZATION' | 'ADMIN';
 export const authenticate = async (request: FastifyRequest, reply: FastifyReply) => {
     try {
         // This attaches the decoded token to request.user
-        await request.jwtVerify(); 
+        await request.jwtVerify();
     } catch (err) {
         reply.status(401).send({ message: 'Unauthorized: Invalid or missing token' });
     }
@@ -21,27 +22,27 @@ export const authenticate = async (request: FastifyRequest, reply: FastifyReply)
  * 2. AUTHORIZATION GUARD (RBAC)
  * Checks if the logged-in user has specific permissions.
  */
-export const authorize = (allowedRoles: UserRole[]) => {
+export const authorize = (requiredRoles: UserRole[]) => {
     return async (request: FastifyRequest, reply: FastifyReply) => {
-        const user = request.user;
+        const user = request.user as {
+            id: string;
+            roles: { isExpert: boolean; isOrg: boolean; isAdmin: boolean }
+        };
 
         if (!user) {
-            return reply.status(401).send({ message: 'Unauthorized' });
+            return reply.status(401).send({ message: 'Unauthorized: No user found' });
         }
 
-        // Map your JWT boolean flags to the String Roles
-        const userRoles: UserRole[] = [];
-        if (user.roles.isExpert) userRoles.push('EXPERT');
-        if (user.roles.isOrg) userRoles.push('ORGANIZATION');
-        if (user.roles.isAdmin) userRoles.push('ADMIN');
+        let hasPermission = false;
 
-        // Check if user has AT LEAST ONE of the allowed roles
-        const hasPermission = allowedRoles.some(role => userRoles.includes(role));
+        // 2. Map String Roles to Boolean Flags
+        if (requiredRoles.includes('USER') && requiredRoles.length === 1) hasPermission = true;
+        if (requiredRoles.includes('EXPERT') && user.roles.isExpert) hasPermission = true;
+        if (requiredRoles.includes('ORGANIZATION') && user.roles.isOrg) hasPermission = true;
+        if (requiredRoles.includes('ADMIN') && user.roles.isAdmin) hasPermission = true;
 
         if (!hasPermission) {
-            return reply.status(403).send({ 
-                message: 'Forbidden: You do not have permission to access this resource.' 
-            });
+            return reply.status(403).send({ message: 'Forbidden: Insufficient permissions' });
         }
     };
 };

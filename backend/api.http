@@ -1,152 +1,130 @@
-### ==================================================================================
-### 1. SYSTEM HEALTH
-### ==================================================================================
+### Global Variables
+@baseUrl = http://localhost:3000
+@api = {{baseUrl}}/api
+@contentType = application/json
 
-### Check Server Status
-GET http://localhost:3000/
+# -----------------------------------------------------------------------------
+# HEALTH CHECK
+# -----------------------------------------------------------------------------
 
-### ==================================================================================
-### 2. AUTHENTICATION - REGISTRATION
-### ==================================================================================
+### Health Check (Root)
+GET {{baseUrl}}/
+Accept: {{contentType}}
 
-### A. Register as a REGULAR USER (Customer)
-# Expect: 201 Created, Email sent
-POST http://localhost:3000/api/auth/register
-Content-Type: application/json
+# -----------------------------------------------------------------------------
+# AUTHENTICATION
+# -----------------------------------------------------------------------------
 
-{
-    "email": "jane.doe@example.com",
-    "password": "Password123!",
-    "name": "Jane Doe"
-}
-
-### B. Register as an EXPERT (Should create ExpertProfile)
-# Expect: 201 Created
-POST http://localhost:3000/api/auth/register
-Content-Type: application/json
+### 1. Register a New User (Standard)
+# Creates a user with role 'USER'
+POST {{api}}/auth/register
+Content-Type: {{contentType}}
 
 {
-    "email": "dr.smith@example.com",
-    "password": "Password123!",
-    "name": "Dr. Smith",
-    "initialRole": "EXPERT"
+  "email": "pahiy49068@dubokutv.com",
+  "password": "SecurePassword123!",
+  "name": "Jane Doe",
+  "promotionalEmails": true,
+  "initialRole": "USER"
 }
 
-### C. Register as an ORGANIZATION (Should create OrganizationProfile)
-# Expect: 201 Created
-POST http://localhost:3000/api/auth/register
-Content-Type: application/json
+### 2. Register a New Expert
+# Creates a user and an empty ExpertProfile
+POST {{api}}/auth/register
+Content-Type: {{contentType}}
 
 {
-    "email": "contact@healthcorp.com",
-    "password": "Password123!",
-    "name": "Health Corp Admin",
-    "initialRole": "ORGANIZATION"
+  "email": "expert.john@example.com",
+  "password": "ExpertPassword123!",
+  "name": "John The Expert",
+  "promotionalEmails": false,
+  "initialRole": "EXPERT"
 }
 
-### D. Test Validation Failure (Invalid Email)
-# Expect: 400 Bad Request
-POST http://localhost:3000/api/auth/register
-Content-Type: application/json
+### 3. Login
+# On success, this will set 'accessToken' and 'refreshToken' httpOnly cookies.
+# The REST Client extension usually manages cookies automatically for subsequent requests.
+POST {{api}}/auth/login
+Content-Type: {{contentType}}
 
 {
-    "email": "not-an-email",
-    "password": "123",
-    "name": "Hacker"
+  "email": "pahiy49068@dubokutv.com",
+  "password": "SecurePassword123!"
 }
 
-### ==================================================================================
-### 3. AUTHENTICATION - VERIFICATION
-### ==================================================================================
+### 4. Logout
+# Clears the cookies and removes the refresh session from the DB.
+POST {{api}}/auth/logout
+Content-Type: {{contentType}}
 
-### Verify Email
-# 1. Check your Server Console logs for the "emailToken".
-# 2. Paste the token below to simulate the Frontend sending the verification request.
-POST http://localhost:3000/api/auth/verify-email
-Content-Type: application/json
+### 5. Refresh Token
+# Uses the 'refreshToken' cookie to get a new 'accessToken'.
+# (Requires a previous successful Login)
+POST {{api}}/auth/refresh
+Content-Type: {{contentType}}
+
+### 6. Verify Email
+# Replace {{token}} with the token logged in the console or sent via email.
+@verificationToken = 50d110af1e4c07c0cbf0dcdd7e8907c87e3ef284356d44e679d7c4b4d73e1155
+POST {{api}}/auth/verify-email
+Content-Type: {{contentType}}
 
 {
-    "token": "PASTE_TOKEN_FROM_CONSOLE_HERE"
+  "token": "{{verificationToken}}"
 }
 
-### ==================================================================================
-### 4. AUTHENTICATION - LOGIN
-### ==================================================================================
-
-### A. Login - Valid User (Before Verification)
-# Expect: 403 Forbidden (Message: Email not verified)
-POST http://localhost:3000/api/auth/login
-Content-Type: application/json
+### 7. Resend Verification Email
+POST {{api}}/auth/resend-verification
+Content-Type: {{contentType}}
 
 {
-    "email": "jane.doe@example.com",
-    "password": "Password123!"
+  "email": "jane.doe@example.com"
 }
 
-### B. Login - Valid User (After Verification)
-# Expect: 200 OK
-# Note: This will set 'accessToken' and 'refreshToken' cookies in your HTTP Client.
-POST http://localhost:3000/api/auth/login
-Content-Type: application/json
+### 8. Google Login (Swap ID Token)
+# Requires a valid Google ID Token obtained from a frontend client.
+POST {{api}}/auth/google
+Content-Type: {{contentType}}
 
 {
-    "email": "jane.doe@example.com",
-    "password": "Password123!"
+  "idToken": "eyJhbGciOiJSUzI1NiIsImtpZCI6Ij..."
 }
 
-### C. Login - Invalid Credentials
-# Expect: 401 Unauthorized
-POST http://localhost:3000/api/auth/login
-Content-Type: application/json
+### 9. Delete Account (Soft Delete)
+# Requires Authentication (Cookie or Bearer).
+DELETE {{api}}/auth/me
+Content-Type: {{contentType}}
+
+# -----------------------------------------------------------------------------
+# EXPERTS
+# -----------------------------------------------------------------------------
+
+### 1. Search Experts (Geo-Spatial)
+# Finds experts within radiusKm of lat/lng.
+# Example Coords: New York City (40.7128, -74.0060)
+GET {{api}}/experts/search?lat=40.7128&lng=-74.0060&radiusKm=50
+Accept: {{contentType}}
+
+### 2. Get Expert Profile by ID
+@expertId = <REPLACE_WITH_UUID_FROM_SEARCH_RESULTS>
+GET {{api}}/experts/{{expertId}}
+Accept: {{contentType}}
+
+### 3. Update Expert Profile
+# Requires Authentication (User must own the profile).
+PUT {{api}}/experts/{{expertId}}
+Content-Type: {{contentType}}
 
 {
-    "email": "jane.doe@example.com",
-    "password": "WRONG_PASSWORD"
+  "headline": "Senior Digital Consultant",
+  "bio": "Over 10 years of experience in digital transformation..."
 }
 
-### ==================================================================================
-### 5. TOKEN MANAGEMENT
-### ==================================================================================
+# -----------------------------------------------------------------------------
+# SERVICES
+# -----------------------------------------------------------------------------
 
-### Refresh Access Token
-# This endpoint relies on the 'refreshToken' cookie set during Login.
-# Note: You need to implement "POST /refresh" in your routes for this to work.
-POST http://localhost:3000/api/auth/refresh
-Content-Type: application/json
-
-{}
-
-### Logout
-# Should clear cookies
-POST http://localhost:3000/api/auth/logout
-Content-Type: application/json
-
-{}
-
-### ==================================================================================
-### 6. [HYPOTHETICAL] MARKETPLACE ROUTES (Based on Schema)
-### Implement these routes in your backend to make these work.
-### ==================================================================================
-
-### Create a Service (Expert Only)
-# POST http://localhost:3000/api/services
-# Content-Type: application/json
-
-# {
-#     "title": "1 Hour Consultation",
-#     "description": "Deep dive into your health.",
-#     "price": 150.00,
-#     "durationMin": 60,
-#     "type": "VIDEO_CALL",
-#     "expertId": "EXPERT_ID_HERE"
-# }
-
-### Book an Appointment
-# POST http://localhost:3000/api/bookings
-# Content-Type: application/json
-
-# {
-#     "serviceId": "SERVICE_ID_HERE",
-#     "expertId": "EXPERT_ID_HERE",
-#     "startTime": "2025-01-20T10:00:00Z"
-# }
+### 1. Get All Services
+# Returns a list of active services (Cached).
+GET {{api}}/services
+Accept: {{contentType}}
