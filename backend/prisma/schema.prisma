@@ -7,45 +7,159 @@ datasource db {
   provider = "postgresql"
 }
 
-// ==========================================
-// 1. THE CORE IDENTITY (Updated Images)
-// ==========================================
+// =========================================================
+// 1. THE USER (Client / Customer)
+// =========================================================
 
 model User {
-  id       String @id @default(uuid())
-  email    String @unique
-  username String @unique
-  name     String
+  id           String  @id @default(uuid())
+  email        String  @unique
+  username     String  @unique
+  passwordHash String?
+  googleId     String? @unique // Unique ONLY within Users
 
-  promotionalEmailsEnabled  Boolean         @default(false)
-  emailNotificationsEnabled Boolean         @default(true)
-  themePreference           ThemePreference @default(SYSTEM)
-
-  // USER AVATAR: Casual/Personal (e.g. for Reviews)
+  name      String
   avatarUrl String?
 
+  // Preferences
+  promotionalEmailsEnabled Boolean         @default(false)
+  themePreference          ThemePreference @default(SYSTEM)
+
+  // Security
+  emailVerificationToken     String?   @unique
+  emailVerificationExpiresAt DateTime?
+  emailVerifiedAt            DateTime?
+  passwordResetToken         String?   @unique
+  passwordResetExpiresAt     DateTime?
+
+  isBlocked Boolean   @default(false)
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lastLogin                 DateTime?
+  emailNotificationsEnabled Boolean   @default(true)
+
+  // Relations
+  refreshSessions RefreshSession[]
+  bookings        Booking[]        @relation("UserBookings") // Appointments they made
+  reviews         Review[]         @relation("UserReviews") // Reviews they wrote
+}
+
+// =========================================================
+// 2. THE EXPERT (Service Provider)
+// =========================================================
+
+model Expert {
+  id           String  @id @default(uuid())
+  email        String  @unique
+  passwordHash String?
+  googleId     String? @unique // Unique ONLY within Experts
+
+  name      String
+  username  String  @unique // Public handle (e.g. @dr_smith)
+  avatarUrl String?
+
+  lastLogin                 DateTime?
+  emailNotificationsEnabled Boolean         @default(true)
+  promotionalEmailsEnabled  Boolean         @default(false)
+  themePreference           ThemePreference @default(SYSTEM)
+
+  // Professional Profile
+  headline    String?
+  bio         String?
+  hourlyRate  Decimal? @db.Decimal(10, 2)
+  specialties String[]
+
+  // Geo-Location (PostGIS Ready)
+  latitude  Float?
+  longitude Float?
+
+  isVerified Boolean @default(false)
+
+  // Security
+  emailVerificationToken     String?   @unique
+  emailVerificationExpiresAt DateTime?
+  emailVerifiedAt            DateTime?
+  passwordResetToken         String?   @unique
+  passwordResetExpiresAt     DateTime?
+
+  isBlocked Boolean   @default(false)
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  refreshSessions RefreshSession[]
+  services        Service[]
+  bookings        Booking[]        @relation("ExpertBookings")
+  reviews         Review[]         @relation("ExpertReviews")
+  availability    Availability[]
+
+  // Organization Relation (Optional: Expert works for Org)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  // PostGIS Index for "Find near me"
+  // @@index([latitude, longitude], name: "expert_geo_index", type: Gist)
+}
+
+// =========================================================
+// 3. THE ORGANIZATION (Business Entity)
+// =========================================================
+
+model Organization {
+  id           String  @id @default(uuid())
+  email        String  @unique
+  username     String  @unique
   passwordHash String?
   googleId     String? @unique
 
-  lastLogin DateTime?
+  lastLogin                 DateTime?
+  emailNotificationsEnabled Boolean   @default(true)
 
+  companyName      String
+  logoUrl          String?
+  websiteUrl       String?
+  companyRegNumber String?
+  address          String?
+
+  // Security
+  emailVerificationToken     String?   @unique
+  emailVerificationExpiresAt DateTime?
+  emailVerifiedAt            DateTime?
+  passwordResetToken         String?   @unique
+  passwordResetExpiresAt     DateTime?
+
+  isBlocked Boolean   @default(false)
   deletedAt DateTime?
 
-  // Security Fields
-  emailVerifiedAt        DateTime?
-  emailVerificationToken String?   @unique
-  emailVerificationExpiresAt DateTime?
-  passwordResetToken     String?   @unique
-  passwordResetExpires   DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  // Roles
-  expertProfile       ExpertProfile?
-  organizationProfile OrganizationProfile?
-  adminProfile        AdminProfile?
+  // Relations
+  refreshSessions RefreshSession[]
+  experts         Expert[] // Experts that belong to this org
+}
 
-  // Activity
-  reviewsWritten Review[] // Reviews the user wrote
-  bookings       Booking[] // Appointments the user made
+// =========================================================
+// 4. THE ADMIN (Platform Manager)
+// =========================================================
+
+model Admin {
+  id           String  @id @default(uuid())
+  email        String  @unique
+  username     String  @unique
+  passwordHash String?
+
+  lastLogin                 DateTime?
+  emailNotificationsEnabled Boolean   @default(true)
+
+  name      String
+  avatarUrl String?
+  role      AdminRole @default(MODERATOR)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -53,122 +167,47 @@ model User {
   refreshSessions RefreshSession[]
 }
 
-// ==========================================
-// 2. SESSION MANAGEMENT (Dual Token)
-// ==========================================
+// =========================================================
+// 5. SHARED SYSTEMS
+// =========================================================
 
 model RefreshSession {
   id        String @id @default(uuid())
   tokenHash String @unique
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   expiresAt DateTime
   createdAt DateTime @default(now())
 
   ipAddress String?
   userAgent String?
-}
 
-// ==========================================
-// 2. ROLE PROFILES (Gold Standard Separation)
-// ==========================================
+  // Polymorphic Relation: Session belongs to EXACTLY ONE of these
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-model ExpertProfile {
-  id String @id @default(uuid())
+  expertId String?
+  expert   Expert? @relation(fields: [expertId], references: [id], onDelete: Cascade)
 
-  // BRANDING: Professional Headshot (Distinct from User Avatar)
-  headshotUrl String?
-  headline    String
-  bio         String?
-  address     String?
-
-  latitude  Float? // e.g. -33.8688
-  longitude Float? // e.g. 151.2093
-
-  availability Availability[]
-
-  timezone String @default("Australia/Sydney")
-
-  // EMPLOYMENT: Expert works for an Organization?
-  // If null, they are a Freelancer.
   organizationId String?
-  organization   OrganizationProfile? @relation(fields: [organizationId], references: [id])
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  specialties String[]
-  isVerified  Boolean  @default(false)
-
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // MARKETPLACE
-  services Service[] // The menu of things they sell
-  bookings Booking[] // The appointments they have to fulfill
-  reviews  Review[] // Reviews received
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  adminId String?
+  admin   Admin?  @relation(fields: [adminId], references: [id], onDelete: Cascade)
 }
 
-model OrganizationProfile {
-  id String @id @default(uuid())
-
-  timezone String @default("Australia/Sydney")
-
-  // BRANDING: Company Logo (Distinct from User Avatar)
-  logoUrl   String?
-  bannerUrl String? // Nice to have for Org Profile Page
-
-  companyName      String // Often different from the owner's "User Name"
-  companyRegNumber String?
-  websiteUrl       String?
-  address          String? // Physical location for "In-Person" visits
-
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // RELATIONS
-  experts ExpertProfile[] // List of experts working here
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-// Admins are Users with superpowers
-model AdminProfile {
-  id    String     @id @default(uuid())
-  level AdminLevel @default(MODERATOR)
-
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-// ==========================================
-// 3. THE MARKETPLACE ENGINE (Services & Bookings)
-// ==========================================
+// Marketplace Models
 
 model Service {
   id          String  @id @default(uuid())
   title       String
   description String?
-
-  isActive Boolean @default(true)
-
-  // PRICING
   price       Decimal @db.Decimal(10, 2)
-  durationMin Int // e.g., 60 minutes
-  bufferMin   Int     @default(0) // ADD THIS: Time needed after service to reset/rest
-
-  // TYPE: The logic you requested (Video vs Clinic)
-  type ServiceType
+  durationMin Int
+  bufferMin   Int     @default(0)
+  isActive    Boolean @default(true)
 
   expertId String
-  expert   ExpertProfile @relation(fields: [expertId], references: [id])
-
+  expert   Expert    @relation(fields: [expertId], references: [id], onDelete: Cascade)
   bookings Booking[]
 
   createdAt DateTime @default(now())
@@ -178,80 +217,64 @@ model Service {
 model Booking {
   id String @id @default(uuid())
 
-  // WHO is involved?
-  customerId String
-  customer   User   @relation(fields: [customerId], references: [id])
+  // The Customer
+  userId String
+  user   User   @relation("UserBookings", fields: [userId], references: [id])
 
+  // The Provider
   expertId String
-  expert   ExpertProfile @relation(fields: [expertId], references: [id])
+  expert   Expert @relation("ExpertBookings", fields: [expertId], references: [id])
 
-  paymentIntentId String? // The Stripe Transaction ID (Crucial for refunds)
-
-  cancellationReason String? // e.g. "Expert called in sick" or "User changed mind"
-
-  priceSnapshot Decimal @db.Decimal(10, 2) // Store the exact price user agreed to
-
+  // The Service
   serviceId String
   service   Service @relation(fields: [serviceId], references: [id])
 
-  // WHEN is it?
   startTime DateTime
   endTime   DateTime
+  status    BookingStatus @default(PENDING)
 
-  // STATUS FLOW
-  status BookingStatus @default(PENDING)
-
-  // MEETING DETAILS
-  // If Type = VIDEO, store Zoom/GoogleMeet link here
-  meetingLink String?
-  // If Type = IN_PERSON, store address snapshot here
-  location    String?
+  priceSnapshot Decimal @db.Decimal(10, 2)
+  meetingLink   String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  review    Review?
+
+  review Review?
 }
 
 model Review {
   id      String  @id @default(uuid())
-  rating  Int // 1-5 stars
+  rating  Int // 1-5
   comment String?
 
-  bookingId String  @unique // One review per booking
+  bookingId String  @unique
   booking   Booking @relation(fields: [bookingId], references: [id])
 
   authorId String
-  author   User   @relation(fields: [authorId], references: [id])
+  author   User   @relation("UserReviews", fields: [authorId], references: [id])
 
   expertId String
-  expert   ExpertProfile @relation(fields: [expertId], references: [id])
+  expert   Expert @relation("ExpertReviews", fields: [expertId], references: [id])
 
   createdAt DateTime @default(now())
 }
 
-// ADD THIS NEW MODEL:
 model Availability {
-  id String @id @default(uuid())
-
+  id       String @id @default(uuid())
   expertId String
-  expert   ExpertProfile @relation(fields: [expertId], references: [id], onDelete: Cascade)
+  expert   Expert @relation(fields: [expertId], references: [id], onDelete: Cascade)
 
-  dayOfWeek Int // 0=Sunday, 1=Monday, etc.
-  startTime String // "09:00" (24h format)
+  dayOfWeek Int // 0=Sun, 1=Mon...
+  startTime String // "09:00"
   endTime   String // "17:00"
-
-  isActive Boolean @default(true) // Toggle specific days off easily
-
-  @@index([expertId])
+  isActive  Boolean @default(true)
 }
 
-// ==========================================
-// 4. ENUMS
-// ==========================================
+// Enums
 
-enum ServiceType {
-  VIDEO_CALL
-  IN_PERSON_VISIT
+enum AdminRole {
+  SUPER_ADMIN
+  MODERATOR
 }
 
 enum BookingStatus {
@@ -259,11 +282,6 @@ enum BookingStatus {
   CONFIRMED
   CANCELLED
   COMPLETED
-}
-
-enum AdminLevel {
-  SUPER_ADMIN
-  MODERATOR
 }
 
 enum ThemePreference {
